@@ -1,7 +1,12 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+} from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -42,6 +47,23 @@ type Post = {
 type Universe = {
   id: string;
   name: string;
+};
+
+type Comment = {
+  id: string;
+  characterId: string;
+  characterName: string;
+  characterUsername: string;
+  characterAvatarUrl: string | null;
+  content: string | null;
+  createdAt: string;
+};
+
+type Interactions = {
+  likeCount: number;
+  commentCount: number;
+  likedByCharacterIds: string[];
+  comments: Comment[];
 };
 
 function Avatar({
@@ -99,9 +121,32 @@ function formatDate(value: string) {
   });
 }
 
+const inputStyle = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: 13,
+  borderRadius: 13,
+  border: "1px solid var(--sr-border)",
+  background: "var(--sr-surface)",
+  color: "var(--sr-text)",
+  fontFamily: "inherit",
+  fontSize: 16,
+};
+
+const emptyInteractions: Interactions = {
+  likeCount: 0,
+  commentCount: 0,
+  likedByCharacterIds: [],
+  comments: [],
+};
+
 export default function FeedPage() {
   const params = useParams<{ universeId: string }>();
   const universeId = params.universeId;
+
+  const apiBase = `/api/universes/${encodeURIComponent(
+    universeId
+  )}`;
 
   const [universe, setUniverse] =
     useState<Universe | null>(null);
@@ -112,16 +157,74 @@ export default function FeedPage() {
   const [authorId, setAuthorId] = useState("");
   const [content, setContent] = useState("");
 
+  const [interactions, setInteractions] = useState<
+    Record<string, Interactions>
+  >({});
+
+  const [openComments, setOpenComments] = useState<
+    Record<string, boolean>
+  >({});
+
+  const [commentDrafts, setCommentDrafts] = useState<
+    Record<string, string>
+  >({});
+
+  const [busyPosts, setBusyPosts] = useState<
+    Record<string, boolean>
+  >({});
+
+  const [interactionErrors, setInteractionErrors] =
+    useState<Record<string, string>>({});
+
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postError, setPostError] =
     useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(
+    null
+  );
 
-  const apiBase = `/api/universes/${encodeURIComponent(
-    universeId
-  )}`;
+  const interactionUrl = useCallback(
+    (postId: string) =>
+      `${apiBase}/posts/${encodeURIComponent(
+        postId
+      )}/interactions`,
+    [apiBase]
+  );
+
+  const loadInteractions = useCallback(
+    async (postId: string): Promise<Interactions> => {
+      const response = await fetch(
+        interactionUrl(postId),
+        { cache: "no-store" }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Não foi possível carregar as interações."
+        );
+      }
+
+      return data as Interactions;
+    },
+    [interactionUrl]
+  );
+
+  const refreshInteractions = useCallback(
+    async (postId: string) => {
+      const data = await loadInteractions(postId);
+
+      setInteractions((current) => ({
+        ...current,
+        [postId]: data,
+      }));
+    },
+    [loadInteractions]
+  );
 
   const loadFeed = useCallback(async () => {
     setLoading(true);
@@ -130,18 +233,12 @@ export default function FeedPage() {
     try {
       const [feedResponse, charactersResponse] =
         await Promise.all([
-          fetch(
-            `/api/universes/${encodeURIComponent(
-              universeId
-            )}/posts`,
-            { cache: "no-store" }
-          ),
-          fetch(
-            `/api/universes/${encodeURIComponent(
-              universeId
-            )}/characters`,
-            { cache: "no-store" }
-          ),
+          fetch(`${apiBase}/posts`, {
+            cache: "no-store",
+          }),
+          fetch(`${apiBase}/characters`, {
+            cache: "no-store",
+          }),
         ]);
 
       const feedData: {
@@ -172,8 +269,10 @@ export default function FeedPage() {
       const loadedCharacters =
         charactersData.characters || [];
 
+      const loadedPosts = feedData.posts || [];
+
       setUniverse(feedData.universe);
-      setPosts(feedData.posts || []);
+      setPosts(loadedPosts);
       setCharacters(loadedCharacters);
 
       setAuthorId((current) => {
@@ -189,9 +288,38 @@ export default function FeedPage() {
         return (
           loadedCharacters.find(
             (character) => character.isAvatar
-          )?.id || loadedCharacters[0]?.id || ""
+          )?.id ||
+          loadedCharacters[0]?.id ||
+          ""
         );
       });
+
+      const results = await Promise.allSettled(
+        loadedPosts.map(async (post) => ({
+          postId: post.id,
+          data: await loadInteractions(post.id),
+        }))
+      );
+
+      const nextInteractions: Record<
+        string,
+        Interactions
+      > = {};
+
+      const nextErrors: Record<string, string> = {};
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          nextInteractions[result.value.postId] =
+            result.value.data;
+        } else {
+          nextErrors[loadedPosts[index].id] =
+            "Não foi possível carregar as interações.";
+        }
+      });
+
+      setInteractions(nextInteractions);
+      setInteractionErrors(nextErrors);
     } catch (err) {
       setError(
         err instanceof Error
@@ -201,14 +329,14 @@ export default function FeedPage() {
     } finally {
       setLoading(false);
     }
-  }, [universeId]);
+  }, [apiBase, loadInteractions]);
 
   useEffect(() => {
     void loadFeed();
   }, [loadFeed]);
 
   async function publishPost(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -247,10 +375,17 @@ export default function FeedPage() {
         );
       }
 
+      const newPost = data.post;
+
       setPosts((current) => [
-        data.post!,
+        newPost,
         ...current,
       ]);
+
+      setInteractions((current) => ({
+        ...current,
+        [newPost.id]: { ...emptyInteractions },
+      }));
 
       setContent("");
       setNotice("Publicado com sucesso! ♡");
@@ -262,6 +397,153 @@ export default function FeedPage() {
       );
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function toggleLike(postId: string) {
+    if (!authorId || busyPosts[postId]) return;
+
+    const current = interactions[postId];
+
+    if (!current) {
+      setInteractionErrors((previous) => ({
+        ...previous,
+        [postId]:
+          "Atualize as interações antes de curtir.",
+      }));
+      return;
+    }
+
+    const liked =
+      current.likedByCharacterIds.includes(authorId);
+
+    setBusyPosts((previous) => ({
+      ...previous,
+      [postId]: true,
+    }));
+
+    setInteractionErrors((previous) => ({
+      ...previous,
+      [postId]: "",
+    }));
+
+    try {
+      const response = await fetch(
+        interactionUrl(postId),
+        {
+          method: liked ? "DELETE" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            liked
+              ? { characterId: authorId }
+              : {
+                  type: "like",
+                  characterId: authorId,
+                }
+          ),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Não foi possível atualizar a curtida."
+        );
+      }
+
+      await refreshInteractions(postId);
+    } catch (err) {
+      setInteractionErrors((previous) => ({
+        ...previous,
+        [postId]:
+          err instanceof Error
+            ? err.message
+            : "Erro ao atualizar curtida.",
+      }));
+    } finally {
+      setBusyPosts((previous) => ({
+        ...previous,
+        [postId]: false,
+      }));
+    }
+  }
+
+  async function submitComment(
+    event: FormEvent<HTMLFormElement>,
+    postId: string
+  ) {
+    event.preventDefault();
+
+    const comment = (
+      commentDrafts[postId] || ""
+    ).trim();
+
+    if (
+      !authorId ||
+      !comment ||
+      busyPosts[postId]
+    ) {
+      return;
+    }
+
+    setBusyPosts((previous) => ({
+      ...previous,
+      [postId]: true,
+    }));
+
+    setInteractionErrors((previous) => ({
+      ...previous,
+      [postId]: "",
+    }));
+
+    try {
+      const response = await fetch(
+        interactionUrl(postId),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "comment",
+            characterId: authorId,
+            content: comment,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Não foi possível publicar o comentário."
+        );
+      }
+
+      setCommentDrafts((previous) => ({
+        ...previous,
+        [postId]: "",
+      }));
+
+      await refreshInteractions(postId);
+    } catch (err) {
+      setInteractionErrors((previous) => ({
+        ...previous,
+        [postId]:
+          err instanceof Error
+            ? err.message
+            : "Erro ao comentar.",
+      }));
+    } finally {
+      setBusyPosts((previous) => ({
+        ...previous,
+        [postId]: false,
+      }));
     }
   }
 
@@ -284,7 +566,8 @@ export default function FeedPage() {
           top: 0,
           zIndex: 20,
           background: "var(--sr-surface)",
-          borderBottom: "1px solid var(--sr-border)",
+          borderBottom:
+            "1px solid var(--sr-border)",
           padding: "15px 16px",
         }}
       >
@@ -341,8 +624,8 @@ export default function FeedPage() {
         <div
           style={{
             display: "flex",
-            alignItems: "center",
             justifyContent: "space-between",
+            alignItems: "center",
             gap: 12,
             marginBottom: 20,
           }}
@@ -355,7 +638,7 @@ export default function FeedPage() {
                 marginBottom: 5,
               }}
             >
-              Seu feed <span>🌸</span>
+              Seu feed 🌸
             </h1>
 
             <p
@@ -376,7 +659,8 @@ export default function FeedPage() {
             disabled={loading}
             aria-label="Atualizar feed"
             style={{
-              border: "1px solid var(--sr-border)",
+              border:
+                "1px solid var(--sr-border)",
               borderRadius: 13,
               background: "var(--sr-surface)",
               color: "var(--sr-primary)",
@@ -399,7 +683,6 @@ export default function FeedPage() {
             <LoaderCircle
               size={29}
               color="var(--sr-primary)"
-              style={{ marginBottom: 12 }}
             />
             <p className="sr-muted">
               Carregando sua realidade...
@@ -468,7 +751,6 @@ export default function FeedPage() {
                     size={25}
                     color="var(--sr-primary)"
                   />
-
                   <p
                     className="sr-muted"
                     style={{
@@ -479,7 +761,6 @@ export default function FeedPage() {
                     Crie um personagem para começar a
                     publicar.
                   </p>
-
                   <Link
                     className="sr-button"
                     href={`/universes/${universeId}/characters`}
@@ -498,7 +779,7 @@ export default function FeedPage() {
                       marginBottom: 9,
                     }}
                   >
-                    Publicar como
+                    Interagir como
                   </label>
 
                   <div
@@ -510,26 +791,26 @@ export default function FeedPage() {
                     }}
                   >
                     <Avatar
-                      name={selectedCharacter?.name || ""}
-                      image={selectedCharacter?.avatarUrl}
+                      name={
+                        selectedCharacter?.name || ""
+                      }
+                      image={
+                        selectedCharacter?.avatarUrl
+                      }
                     />
 
                     <select
                       id="post-author"
                       value={authorId}
                       onChange={(event) =>
-                        setAuthorId(event.target.value)
+                        setAuthorId(
+                          event.target.value
+                        )
                       }
                       style={{
+                        ...inputStyle,
                         flex: 1,
                         minWidth: 0,
-                        padding: 12,
-                        borderRadius: 12,
-                        border:
-                          "1px solid var(--sr-border)",
-                        background: "var(--sr-surface)",
-                        color: "var(--sr-text)",
-                        fontSize: 16,
                       }}
                     >
                       {characters.map((character) => (
@@ -562,22 +843,15 @@ export default function FeedPage() {
                     id="post-content"
                     value={content}
                     onChange={(event) =>
-                      setContent(event.target.value)
+                      setContent(
+                        event.target.value
+                      )
                     }
                     maxLength={5000}
                     rows={4}
                     placeholder="Escreva algo que aconteceu na sua realidade... ♡"
                     style={{
-                      width: "100%",
-                      boxSizing: "border-box",
-                      padding: 14,
-                      borderRadius: 14,
-                      border:
-                        "1px solid var(--sr-border)",
-                      background: "var(--sr-surface)",
-                      color: "var(--sr-text)",
-                      fontFamily: "inherit",
-                      fontSize: 16,
+                      ...inputStyle,
                       resize: "vertical",
                       lineHeight: 1.6,
                     }}
@@ -586,7 +860,8 @@ export default function FeedPage() {
                   <div
                     style={{
                       display: "flex",
-                      justifyContent: "space-between",
+                      justifyContent:
+                        "space-between",
                       alignItems: "center",
                       gap: 12,
                       marginTop: 12,
@@ -610,7 +885,9 @@ export default function FeedPage() {
                     >
                       {publishing ? (
                         <>
-                          <LoaderCircle size={17} />
+                          <LoaderCircle
+                            size={17}
+                          />
                           Publicando...
                         </>
                       ) : (
@@ -628,7 +905,6 @@ export default function FeedPage() {
                       style={{
                         color: "#b91c1c",
                         fontSize: 13,
-                        marginTop: 12,
                       }}
                     >
                       {postError}
@@ -639,9 +915,9 @@ export default function FeedPage() {
                     <p
                       role="status"
                       style={{
-                        color: "var(--sr-primary)",
+                        color:
+                          "var(--sr-primary)",
                         fontSize: 13,
-                        marginTop: 12,
                       }}
                     >
                       {notice}
@@ -654,7 +930,8 @@ export default function FeedPage() {
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
+                justifyContent:
+                  "space-between",
                 alignItems: "center",
                 marginBottom: 15,
               }}
@@ -684,7 +961,6 @@ export default function FeedPage() {
                 <Sparkles
                   size={35}
                   color="var(--sr-primary)"
-                  style={{ marginBottom: 13 }}
                 />
                 <p
                   style={{
@@ -702,8 +978,8 @@ export default function FeedPage() {
                     margin: 0,
                   }}
                 >
-                  Ainda não existem publicações neste
-                  universo. Escreva o primeiro post!
+                  Ainda não existem publicações.
+                  Escreva o primeiro post!
                 </p>
               </section>
             ) : (
@@ -713,125 +989,495 @@ export default function FeedPage() {
                   gap: 14,
                 }}
               >
-                {posts.map((post) => (
-                  <article
-                    key={post.id}
-                    className="sr-card"
-                    style={{ padding: 20 }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 12,
-                        marginBottom: 15,
-                      }}
-                    >
-                      <Link
-                        href={`/universes/${universeId}/characters/${post.authorId}`}
-                        style={{
-                          textDecoration: "none",
-                        }}
-                      >
-                        <Avatar
-                          name={post.authorName}
-                          image={post.authorAvatarUrl}
-                        />
-                      </Link>
+                {posts.map((post) => {
+                  const info =
+                    interactions[post.id];
 
+                  const liked = Boolean(
+                    authorId &&
+                      info?.likedByCharacterIds.includes(
+                        authorId
+                      )
+                  );
+
+                  const commentsOpen =
+                    Boolean(
+                      openComments[post.id]
+                    );
+
+                  const busy =
+                    Boolean(busyPosts[post.id]);
+
+                  return (
+                    <article
+                      key={post.id}
+                      className="sr-card"
+                      style={{ padding: 20 }}
+                    >
                       <div
                         style={{
-                          flex: 1,
-                          minWidth: 0,
+                          display: "flex",
+                          alignItems:
+                            "flex-start",
+                          gap: 12,
+                          marginBottom: 15,
                         }}
                       >
                         <Link
                           href={`/universes/${universeId}/characters/${post.authorId}`}
                           style={{
-                            color: "var(--sr-text)",
-                            fontWeight: 700,
-                            textDecoration: "none",
-                            fontSize: 14,
+                            textDecoration:
+                              "none",
                           }}
                         >
-                          {post.authorName}
+                          <Avatar
+                            name={
+                              post.authorName
+                            }
+                            image={
+                              post.authorAvatarUrl
+                            }
+                          />
                         </Link>
 
-                        <p
-                          className="sr-muted"
+                        <div
                           style={{
-                            fontSize: 12,
-                            margin: "3px 0",
-                            overflowWrap: "anywhere",
+                            flex: 1,
+                            minWidth: 0,
                           }}
                         >
-                          @{post.authorUsername}
-                        </p>
+                          <Link
+                            href={`/universes/${universeId}/characters/${post.authorId}`}
+                            style={{
+                              color:
+                                "var(--sr-text)",
+                              fontWeight: 700,
+                              textDecoration:
+                                "none",
+                              fontSize: 14,
+                            }}
+                          >
+                            {post.authorName}
+                          </Link>
 
-                        <span
-                          className="sr-muted"
-                          style={{ fontSize: 11 }}
-                        >
-                          {formatDate(post.narrativeTime)}
-                        </span>
+                          <p
+                            className="sr-muted"
+                            style={{
+                              fontSize: 12,
+                              margin: "3px 0",
+                              overflowWrap:
+                                "anywhere",
+                            }}
+                          >
+                            @{post.authorUsername}
+                          </p>
+
+                          <span
+                            className="sr-muted"
+                            style={{
+                              fontSize: 11,
+                            }}
+                          >
+                            {formatDate(
+                              post.narrativeTime
+                            )}
+                          </span>
+                        </div>
+
+                        {post.authorIsAvatar && (
+                          <span className="sr-badge">
+                            Meu avatar
+                          </span>
+                        )}
                       </div>
 
-                      {post.authorIsAvatar && (
-                        <span className="sr-badge">
-                          Meu avatar
-                        </span>
+                      <p
+                        style={{
+                          fontSize: 15,
+                          lineHeight: 1.8,
+                          whiteSpace:
+                            "pre-wrap",
+                          overflowWrap:
+                            "anywhere",
+                          marginBottom: 18,
+                        }}
+                      >
+                        {post.content}
+                      </p>
+
+                      <div
+                        style={{
+                          borderTop:
+                            "1px solid var(--sr-border)",
+                          paddingTop: 13,
+                          display: "flex",
+                          gap: 22,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          disabled={
+                            busy ||
+                            !authorId ||
+                            !info
+                          }
+                          onClick={() =>
+                            void toggleLike(
+                              post.id
+                            )
+                          }
+                          aria-pressed={liked}
+                          style={{
+                            border: "none",
+                            background:
+                              "transparent",
+                            color: liked
+                              ? "#e85b91"
+                              : "var(--sr-text-muted)",
+                            display: "flex",
+                            alignItems:
+                              "center",
+                            gap: 7,
+                            cursor: "pointer",
+                            fontSize: 13,
+                            padding: 4,
+                          }}
+                        >
+                          <Heart
+                            size={19}
+                            fill={
+                              liked
+                                ? "currentColor"
+                                : "none"
+                            }
+                          />
+                          {info?.likeCount ??
+                            "—"}{" "}
+                          Curtidas
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenComments(
+                              (previous) => ({
+                                ...previous,
+                                [post.id]:
+                                  !previous[
+                                    post.id
+                                  ],
+                              })
+                            )
+                          }
+                          style={{
+                            border: "none",
+                            background:
+                              "transparent",
+                            color:
+                              "var(--sr-text-muted)",
+                            display: "flex",
+                            alignItems:
+                              "center",
+                            gap: 7,
+                            cursor: "pointer",
+                            fontSize: 13,
+                            padding: 4,
+                          }}
+                        >
+                          <MessageCircle
+                            size={19}
+                          />
+                          {info?.commentCount ??
+                            "—"}{" "}
+                          Comentários
+                        </button>
+                      </div>
+
+                      {interactionErrors[
+                        post.id
+                      ] && (
+                        <div
+                          role="alert"
+                          style={{
+                            marginTop: 12,
+                            color: "#b91c1c",
+                            fontSize: 12,
+                          }}
+                        >
+                          {
+                            interactionErrors[
+                              post.id
+                            ]
+                          }
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void refreshInteractions(
+                                post.id
+                              ).then(() =>
+                                setInteractionErrors(
+                                  (previous) => ({
+                                    ...previous,
+                                    [post.id]: "",
+                                  })
+                                )
+                              ).catch(() => {
+                                setInteractionErrors(
+                                  (previous) => ({
+                                    ...previous,
+                                    [post.id]:
+                                      "Não foi possível atualizar.",
+                                  })
+                                );
+                              })
+                            }
+                            style={{
+                              marginLeft: 8,
+                              color:
+                                "var(--sr-primary)",
+                              background:
+                                "transparent",
+                              border: "none",
+                              textDecoration:
+                                "underline",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Tentar novamente
+                          </button>
+                        </div>
                       )}
-                    </div>
 
-                    <p
-                      style={{
-                        fontSize: 15,
-                        lineHeight: 1.8,
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                        marginBottom: 18,
-                      }}
-                    >
-                      {post.content}
-                    </p>
+                      {commentsOpen && (
+                        <section
+                          style={{
+                            marginTop: 18,
+                            paddingTop: 15,
+                            borderTop:
+                              "1px solid var(--sr-border)",
+                          }}
+                        >
+                          <h3
+                            style={{
+                              fontSize: 15,
+                              marginBottom: 15,
+                            }}
+                          >
+                            Comentários ♡
+                          </h3>
 
-                    <div
-                      style={{
-                        borderTop:
-                          "1px solid var(--sr-border)",
-                        paddingTop: 13,
-                        display: "flex",
-                        gap: 22,
-                        color: "var(--sr-text-muted)",
-                        fontSize: 12,
-                      }}
-                    >
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                        title="Curtidas em desenvolvimento"
-                      >
-                        <Heart size={17} />
-                        Curtir
-                      </span>
+                          {!info ? (
+                            <p
+                              className="sr-muted"
+                              style={{
+                                fontSize: 13,
+                              }}
+                            >
+                              Carregando
+                              comentários...
+                            </p>
+                          ) : info.comments.length ===
+                            0 ? (
+                            <p
+                              className="sr-muted"
+                              style={{
+                                fontSize: 13,
+                              }}
+                            >
+                              Seja o primeiro a
+                              comentar!
+                            </p>
+                          ) : (
+                            <div
+                              style={{
+                                display: "grid",
+                                gap: 15,
+                                marginBottom: 20,
+                              }}
+                            >
+                              {info.comments.map(
+                                (comment) => (
+                                  <div
+                                    key={
+                                      comment.id
+                                    }
+                                    style={{
+                                      display:
+                                        "flex",
+                                      alignItems:
+                                        "flex-start",
+                                      gap: 10,
+                                    }}
+                                  >
+                                    <Link
+                                      href={`/universes/${universeId}/characters/${comment.characterId}`}
+                                    >
+                                      <Avatar
+                                        name={
+                                          comment.characterName
+                                        }
+                                        image={
+                                          comment.characterAvatarUrl
+                                        }
+                                        size={35}
+                                      />
+                                    </Link>
 
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                        title="Comentários em desenvolvimento"
-                      >
-                        <MessageCircle size={17} />
-                        Comentar
-                      </span>
-                    </div>
-                  </article>
-                ))}
+                                    <div
+                                      style={{
+                                        flex: 1,
+                                        minWidth: 0,
+                                      }}
+                                    >
+                                      <Link
+                                        href={`/universes/${universeId}/characters/${comment.characterId}`}
+                                        style={{
+                                          fontSize: 13,
+                                          fontWeight: 700,
+                                          color:
+                                            "var(--sr-text)",
+                                          textDecoration:
+                                            "none",
+                                        }}
+                                      >
+                                        {
+                                          comment.characterName
+                                        }
+                                      </Link>
+
+                                      <span
+                                        className="sr-muted"
+                                        style={{
+                                          fontSize: 11,
+                                          marginLeft: 6,
+                                        }}
+                                      >
+                                        @
+                                        {
+                                          comment.characterUsername
+                                        }
+                                      </span>
+
+                                      <p
+                                        style={{
+                                          fontSize: 13,
+                                          lineHeight: 1.6,
+                                          margin:
+                                            "5px 0",
+                                          whiteSpace:
+                                            "pre-wrap",
+                                          overflowWrap:
+                                            "anywhere",
+                                        }}
+                                      >
+                                        {
+                                          comment.content
+                                        }
+                                      </p>
+
+                                      <span
+                                        className="sr-muted"
+                                        style={{
+                                          fontSize: 10,
+                                        }}
+                                      >
+                                        {formatDate(
+                                          comment.createdAt
+                                        )}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          )}
+
+                          <form
+                            onSubmit={(event) =>
+                              void submitComment(
+                                event,
+                                post.id
+                              )
+                            }
+                          >
+                            <label
+                              htmlFor={`comment-${post.id}`}
+                              style={{
+                                display: "block",
+                                fontSize: 12,
+                                fontWeight: 600,
+                                marginBottom: 8,
+                              }}
+                            >
+                              Comentando como{" "}
+                              {selectedCharacter?.name ||
+                                "personagem"}
+                            </label>
+
+                            <textarea
+                              id={`comment-${post.id}`}
+                              rows={2}
+                              maxLength={2000}
+                              value={
+                                commentDrafts[
+                                  post.id
+                                ] || ""
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                setCommentDrafts(
+                                  (previous) => ({
+                                    ...previous,
+                                    [post.id]:
+                                      event.target.value,
+                                  })
+                                )
+                              }
+                              placeholder="Escreva um comentário..."
+                              style={{
+                                ...inputStyle,
+                                resize:
+                                  "vertical",
+                              }}
+                            />
+
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent:
+                                  "flex-end",
+                                marginTop: 10,
+                              }}
+                            >
+                              <button
+                                type="submit"
+                                className="sr-button"
+                                disabled={
+                                  busy ||
+                                  !authorId ||
+                                  !(
+                                    commentDrafts[
+                                      post.id
+                                    ] || ""
+                                  ).trim()
+                                }
+                              >
+                                <Send
+                                  size={15}
+                                />
+                                {busy
+                                  ? "Enviando..."
+                                  : "Comentar"}
+                              </button>
+                            </div>
+                          </form>
+                        </section>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </>
