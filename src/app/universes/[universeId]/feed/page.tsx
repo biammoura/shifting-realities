@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
+  CornerDownRight,
   Feather,
   Heart,
   LoaderCircle,
@@ -22,6 +23,7 @@ import {
   UserRound,
   Users,
   WandSparkles,
+  X,
 } from "lucide-react";
 import AutoReactions from "@/components/AutoReactions";
 
@@ -60,6 +62,7 @@ type Comment = {
   characterAvatarUrl: string | null;
   content: string | null;
   createdAt: string;
+  parentCommentId: string | null;
 };
 
 type Interactions = {
@@ -67,6 +70,12 @@ type Interactions = {
   commentCount: number;
   likedByCharacterIds: string[];
   comments: Comment[];
+};
+
+type ReplyTarget = {
+  id: string;
+  name: string;
+  username: string;
 };
 
 const inputStyle: CSSProperties = {
@@ -176,6 +185,89 @@ async function readJson(response: Response) {
   return data;
 }
 
+function organizeComments(comments: Comment[]) {
+  const byId = new Map(
+    comments.map((comment) => [
+      comment.id,
+      comment,
+    ])
+  );
+
+  const children = new Map<
+    string,
+    Comment[]
+  >();
+
+  const roots: Comment[] = [];
+
+  for (const comment of comments) {
+    const parentId =
+      comment.parentCommentId;
+
+    if (
+      parentId &&
+      parentId !== comment.id &&
+      byId.has(parentId)
+    ) {
+      const existing =
+        children.get(parentId) || [];
+
+      existing.push(comment);
+
+      children.set(
+        parentId,
+        existing
+      );
+    } else {
+      roots.push(comment);
+    }
+  }
+
+  const ordered: {
+    comment: Comment;
+    depth: number;
+  }[] = [];
+
+  const visited = new Set<string>();
+
+  function visit(
+    comment: Comment,
+    depth: number
+  ) {
+    if (visited.has(comment.id)) {
+      return;
+    }
+
+    visited.add(comment.id);
+
+    ordered.push({
+      comment,
+      depth,
+    });
+
+    const replies =
+      children.get(comment.id) || [];
+
+    for (const reply of replies) {
+      visit(reply, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    visit(root, 0);
+  }
+
+  // Garante que comentários com vínculos
+  // inesperados também sejam exibidos.
+  for (const comment of comments) {
+    if (!visited.has(comment.id)) {
+      visit(comment, 0);
+    }
+  }
+
+  return ordered;
+}
+
 export default function FeedPage() {
   const { universeId } = useParams<{
     universeId: string;
@@ -208,11 +300,18 @@ export default function FeedPage() {
   const [commentDrafts, setCommentDrafts] =
     useState<Record<string, string>>({});
 
+  const [replyTargets, setReplyTargets] =
+    useState<Record<string, ReplyTarget | null>>(
+      {}
+    );
+
   const [busyPosts, setBusyPosts] =
     useState<Record<string, boolean>>({});
 
-  const [interactionErrors, setInteractionErrors] =
-    useState<Record<string, string>>({});
+  const [
+    interactionErrors,
+    setInteractionErrors,
+  ] = useState<Record<string, string>>({});
 
   const [loading, setLoading] =
     useState(true);
@@ -274,20 +373,27 @@ export default function FeedPage() {
   );
 
   const loadInteractions = useCallback(
-    async (postId: string): Promise<Interactions> => {
+    async (
+      postId: string
+    ): Promise<Interactions> => {
       const response = await fetch(
         interactionUrl(postId),
-        { cache: "no-store" }
+        {
+          cache: "no-store",
+        }
       );
 
-      return (await readJson(response)) as Interactions;
+      return (await readJson(
+        response
+      )) as Interactions;
     },
     [interactionUrl]
   );
 
   const refreshInteractions = useCallback(
     async (postId: string) => {
-      const data = await loadInteractions(postId);
+      const data =
+        await loadInteractions(postId);
 
       setInteractions((current) => ({
         ...current,
@@ -340,36 +446,46 @@ export default function FeedPage() {
 
       setAuthorId((current) =>
         loadedCharacters.some(
-          (character) => character.id === current
+          (character) =>
+            character.id === current
         )
           ? current
           : loadedCharacters.find(
-              (character) => character.isAvatar
+              (character) =>
+                character.isAvatar
             )?.id ||
             loadedCharacters[0]?.id ||
             ""
       );
 
-      const eligible = loadedCharacters.filter(
-        (character) =>
-          character.isAiControlled &&
-          !character.isAvatar
-      );
+      const eligible =
+        loadedCharacters.filter(
+          (character) =>
+            character.isAiControlled &&
+            !character.isAvatar
+        );
 
       setAiCharacterId((current) =>
         eligible.some(
-          (character) => character.id === current
+          (character) =>
+            character.id === current
         )
           ? current
           : eligible[0]?.id || ""
       );
 
-      const results = await Promise.allSettled(
-        loadedPosts.map(async (post) => ({
-          postId: post.id,
-          data: await loadInteractions(post.id),
-        }))
-      );
+      const results =
+        await Promise.allSettled(
+          loadedPosts.map(
+            async (post) => ({
+              postId: post.id,
+              data:
+                await loadInteractions(
+                  post.id
+                ),
+            })
+          )
+        );
 
       const nextInteractions:
         Record<string, Interactions> = {};
@@ -377,18 +493,23 @@ export default function FeedPage() {
       const nextErrors:
         Record<string, string> = {};
 
-      results.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          nextInteractions[
-            result.value.postId
-          ] = result.value.data;
-        } else {
-          nextErrors[
-            loadedPosts[index].id
-          ] =
-            "Não foi possível carregar as interações.";
+      results.forEach(
+        (result, index) => {
+          if (
+            result.status ===
+            "fulfilled"
+          ) {
+            nextInteractions[
+              result.value.postId
+            ] = result.value.data;
+          } else {
+            nextErrors[
+              loadedPosts[index].id
+            ] =
+              "Não foi possível carregar as interações.";
+          }
         }
-      });
+      );
 
       setInteractions(nextInteractions);
       setInteractionErrors(nextErrors);
@@ -423,10 +544,12 @@ export default function FeedPage() {
           {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
+              "Content-Type":
+                "application/json",
             },
             body: JSON.stringify({
-              characterId: aiCharacterId,
+              characterId:
+                aiCharacterId,
               instruction:
                 aiInstruction.trim(),
             }),
@@ -499,7 +622,8 @@ export default function FeedPage() {
         await fetch(`${apiBase}/posts`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
             authorId,
@@ -529,7 +653,6 @@ export default function FeedPage() {
       }));
 
       setContent("");
-
       setAutoReactionPostId(newPost.id);
 
       setNotice(
@@ -603,11 +726,13 @@ export default function FeedPage() {
             body: JSON.stringify(
               liked
                 ? {
-                    characterId: authorId,
+                    characterId:
+                      authorId,
                   }
                 : {
                     type: "like",
-                    characterId: authorId,
+                    characterId:
+                      authorId,
                   }
             ),
           }
@@ -633,6 +758,57 @@ export default function FeedPage() {
     }
   }
 
+  function startReply(
+    postId: string,
+    comment: Comment
+  ) {
+    setReplyTargets((previous) => ({
+      ...previous,
+      [postId]: {
+        id: comment.id,
+        name:
+          comment.characterName,
+        username:
+          comment.characterUsername,
+      },
+    }));
+
+    setOpenComments((previous) => ({
+      ...previous,
+      [postId]: true,
+    }));
+
+    setInteractionErrors(
+      (previous) => ({
+        ...previous,
+        [postId]: "",
+      })
+    );
+
+    window.setTimeout(() => {
+      const textarea =
+        document.getElementById(
+          `comment-${postId}`
+        );
+
+      textarea?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+
+      textarea?.focus();
+    }, 0);
+  }
+
+  function cancelReply(
+    postId: string
+  ) {
+    setReplyTargets((previous) => ({
+      ...previous,
+      [postId]: null,
+    }));
+  }
+
   async function submitComment(
     event: FormEvent<HTMLFormElement>,
     postId: string
@@ -642,6 +818,9 @@ export default function FeedPage() {
     const comment = (
       commentDrafts[postId] || ""
     ).trim();
+
+    const replyTarget =
+      replyTargets[postId];
 
     if (
       !authorId ||
@@ -675,8 +854,11 @@ export default function FeedPage() {
             },
             body: JSON.stringify({
               type: "comment",
-              characterId: authorId,
+              characterId:
+                authorId,
               content: comment,
+              parentCommentId:
+                replyTarget?.id ?? null,
             }),
           }
         )
@@ -686,6 +868,13 @@ export default function FeedPage() {
         (previous) => ({
           ...previous,
           [postId]: "",
+        })
+      );
+
+      setReplyTargets(
+        (previous) => ({
+          ...previous,
+          [postId]: null,
         })
       );
 
@@ -1498,6 +1687,24 @@ export default function FeedPage() {
                       busyPosts[post.id]
                     );
 
+                  const replyTarget =
+                    replyTargets[post.id];
+
+                  const organizedComments =
+                    organizeComments(
+                      info?.comments || []
+                    );
+
+                  const commentLookup =
+                    new Map(
+                      (info?.comments || []).map(
+                        (comment) => [
+                          comment.id,
+                          comment,
+                        ]
+                      )
+                    );
+
                   return (
                     <article
                       key={post.id}
@@ -1767,103 +1974,203 @@ export default function FeedPage() {
                             <div
                               style={{
                                 display: "grid",
-                                gap: 15,
+                                gap: 14,
                                 marginBottom: 20,
                               }}
                             >
-                              {info.comments.map(
-                                (comment) => (
-                                  <div
-                                    key={
-                                      comment.id
-                                    }
-                                    style={{
-                                      display:
-                                        "flex",
-                                      alignItems:
-                                        "flex-start",
-                                      gap: 10,
-                                    }}
-                                  >
-                                    <Link
-                                      href={`/universes/${universeId}/characters/${comment.characterId}`}
-                                    >
-                                      <Avatar
-                                        name={
-                                          comment.characterName
-                                        }
-                                        image={
-                                          comment.characterAvatarUrl
-                                        }
-                                        size={35}
-                                      />
-                                    </Link>
+                              {organizedComments.map(
+                                ({
+                                  comment,
+                                  depth,
+                                }) => {
+                                  const parent =
+                                    comment.parentCommentId
+                                      ? commentLookup.get(
+                                          comment.parentCommentId
+                                        )
+                                      : null;
 
+                                  return (
                                     <div
+                                      key={
+                                        comment.id
+                                      }
                                       style={{
-                                        flex: 1,
-                                        minWidth: 0,
+                                        display:
+                                          "flex",
+                                        alignItems:
+                                          "flex-start",
+                                        gap: 9,
+                                        marginLeft:
+                                          depth > 0
+                                            ? 17
+                                            : 0,
+                                        paddingLeft:
+                                          depth > 0
+                                            ? 10
+                                            : 0,
+                                        borderLeft:
+                                          depth > 0
+                                            ? "2px solid var(--sr-border)"
+                                            : "none",
                                       }}
                                     >
+                                      {depth >
+                                        0 && (
+                                        <CornerDownRight
+                                          size={14}
+                                          color="var(--sr-primary)"
+                                          style={{
+                                            flexShrink: 0,
+                                            marginTop: 8,
+                                          }}
+                                        />
+                                      )}
+
                                       <Link
                                         href={`/universes/${universeId}/characters/${comment.characterId}`}
                                         style={{
-                                          fontSize: 13,
-                                          fontWeight: 700,
-                                          color:
-                                            "var(--sr-text)",
-                                          textDecoration:
-                                            "none",
+                                          flexShrink: 0,
                                         }}
                                       >
-                                        {
-                                          comment.characterName
-                                        }
+                                        <Avatar
+                                          name={
+                                            comment.characterName
+                                          }
+                                          image={
+                                            comment.characterAvatarUrl
+                                          }
+                                          size={
+                                            depth > 0
+                                              ? 30
+                                              : 35
+                                          }
+                                        />
                                       </Link>
 
-                                      <span
-                                        className="sr-muted"
+                                      <div
                                         style={{
-                                          fontSize: 11,
-                                          marginLeft: 6,
+                                          flex: 1,
+                                          minWidth: 0,
                                         }}
                                       >
-                                        @
-                                        {
-                                          comment.characterUsername
-                                        }
-                                      </span>
+                                        <Link
+                                          href={`/universes/${universeId}/characters/${comment.characterId}`}
+                                          style={{
+                                            fontSize: 13,
+                                            fontWeight: 700,
+                                            color:
+                                              "var(--sr-text)",
+                                            textDecoration:
+                                              "none",
+                                          }}
+                                        >
+                                          {
+                                            comment.characterName
+                                          }
+                                        </Link>
 
-                                      <p
-                                        style={{
-                                          fontSize: 13,
-                                          lineHeight: 1.6,
-                                          margin:
-                                            "5px 0",
-                                          whiteSpace:
-                                            "pre-wrap",
-                                          overflowWrap:
-                                            "anywhere",
-                                        }}
-                                      >
-                                        {
-                                          comment.content
-                                        }
-                                      </p>
+                                        <span
+                                          className="sr-muted"
+                                          style={{
+                                            fontSize: 11,
+                                            marginLeft: 6,
+                                            overflowWrap:
+                                              "anywhere",
+                                          }}
+                                        >
+                                          @
+                                          {
+                                            comment.characterUsername
+                                          }
+                                        </span>
 
-                                      <span
-                                        className="sr-muted"
-                                        style={{
-                                          fontSize: 10,
-                                        }}
-                                      >
-                                        {formatDate(
-                                          comment.createdAt
+                                        {parent && (
+                                          <p
+                                            style={{
+                                              fontSize: 11,
+                                              color:
+                                                "var(--sr-primary)",
+                                              margin:
+                                                "5px 0 2px",
+                                            }}
+                                          >
+                                            Respondendo a @
+                                            {
+                                              parent.characterUsername
+                                            }
+                                          </p>
                                         )}
-                                      </span>
+
+                                        <p
+                                          style={{
+                                            fontSize: 13,
+                                            lineHeight: 1.6,
+                                            margin:
+                                              "5px 0",
+                                            whiteSpace:
+                                              "pre-wrap",
+                                            overflowWrap:
+                                              "anywhere",
+                                          }}
+                                        >
+                                          {
+                                            comment.content
+                                          }
+                                        </p>
+
+                                        <div
+                                          style={{
+                                            display:
+                                              "flex",
+                                            alignItems:
+                                              "center",
+                                            gap: 14,
+                                            flexWrap:
+                                              "wrap",
+                                          }}
+                                        >
+                                          <span
+                                            className="sr-muted"
+                                            style={{
+                                              fontSize: 10,
+                                            }}
+                                          >
+                                            {formatDate(
+                                              comment.createdAt
+                                            )}
+                                          </span>
+
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              startReply(
+                                                post.id,
+                                                comment
+                                              )
+                                            }
+                                            disabled={
+                                              !authorId ||
+                                              busy
+                                            }
+                                            style={{
+                                              ...buttonBare,
+                                              color:
+                                                "var(--sr-primary)",
+                                              fontSize: 11,
+                                              fontWeight: 600,
+                                            }}
+                                          >
+                                            <MessageCircle
+                                              size={13}
+                                            />
+                                            Responder
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
-                                )
+                                  );
+                                }
                               )}
                             </div>
                           )}
@@ -1878,6 +2185,67 @@ export default function FeedPage() {
                               )
                             }
                           >
+                            {replyTarget && (
+                              <div
+                                style={{
+                                  display:
+                                    "flex",
+                                  justifyContent:
+                                    "space-between",
+                                  alignItems:
+                                    "center",
+                                  gap: 10,
+                                  padding:
+                                    "10px 12px",
+                                  marginBottom: 10,
+                                  background:
+                                    "var(--sr-primary-soft)",
+                                  borderRadius: 12,
+                                  color:
+                                    "var(--sr-primary)",
+                                  fontSize: 12,
+                                }}
+                              >
+                                <span>
+                                  Respondendo a{" "}
+                                  <strong>
+                                    @
+                                    {
+                                      replyTarget.username
+                                    }
+                                  </strong>
+                                </span>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    cancelReply(
+                                      post.id
+                                    )
+                                  }
+                                  aria-label="Cancelar resposta"
+                                  style={{
+                                    border:
+                                      "none",
+                                    background:
+                                      "transparent",
+                                    color:
+                                      "var(--sr-primary)",
+                                    cursor:
+                                      "pointer",
+                                    display:
+                                      "flex",
+                                    alignItems:
+                                      "center",
+                                  }}
+                                >
+                                  <X
+                                    size={17}
+                                  />
+                                </button>
+                              </div>
+                            )}
+
                             <label
                               htmlFor={`comment-${post.id}`}
                               style={{
@@ -1887,7 +2255,10 @@ export default function FeedPage() {
                                 marginBottom: 8,
                               }}
                             >
-                              Comentando como{" "}
+                              {replyTarget
+                                ? "Respondendo"
+                                : "Comentando"}{" "}
+                              como{" "}
                               {selectedCharacter?.name ||
                                 "personagem"}
                             </label>
@@ -1912,7 +2283,11 @@ export default function FeedPage() {
                                   })
                                 )
                               }
-                              placeholder="Escreva um comentário..."
+                              placeholder={
+                                replyTarget
+                                  ? `Responda a @${replyTarget.username}...`
+                                  : "Escreva um comentário..."
+                              }
                               style={{
                                 ...inputStyle,
                                 resize:
@@ -1947,7 +2322,9 @@ export default function FeedPage() {
 
                                 {busy
                                   ? "Enviando..."
-                                  : "Comentar"}
+                                  : replyTarget
+                                    ? "Responder"
+                                    : "Comentar"}
                               </button>
                             </div>
                           </form>
