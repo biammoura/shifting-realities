@@ -20,44 +20,85 @@ type RouteContext = {
   }>;
 };
 
-const createInteractionSchema = z
-  .discriminatedUnion("type", [
-    z.object({
-      type: z.literal("like"),
-      characterId: z.string().uuid(),
-    }).strict(),
-    z.object({
-      type: z.literal("comment"),
-      characterId: z.string().uuid(),
-      content: z.string().trim().min(1).max(2000),
-    }).strict(),
-  ]);
+const uuidSchema = z.string().uuid();
 
-const removeLikeSchema = z.object({
-  characterId: z.string().uuid(),
-}).strict();
+const createInteractionSchema = z.discriminatedUnion(
+  "type",
+  [
+    z
+      .object({
+        type: z.literal("like"),
+        characterId: uuidSchema,
+      })
+      .strict(),
 
-function errorResponse(message: string, status: number) {
+    z
+      .object({
+        type: z.literal("comment"),
+        characterId: uuidSchema,
+        content: z
+          .string()
+          .trim()
+          .min(1)
+          .max(2000),
+        parentCommentId: uuidSchema
+          .nullable()
+          .optional(),
+      })
+      .strict(),
+  ]
+);
+
+const removeLikeSchema = z
+  .object({
+    characterId: uuidSchema,
+  })
+  .strict();
+
+function errorResponse(
+  message: string,
+  status: number
+) {
   return NextResponse.json(
     { error: message },
     {
       status,
-      headers: { "Cache-Control": "no-store" },
+      headers: {
+        "Cache-Control": "no-store",
+      },
     }
   );
 }
 
-async function getValidIds(context: RouteContext) {
-  const { universeId, postId } = await context.params;
+function successResponse(
+  data: unknown,
+  status = 200
+) {
+  return NextResponse.json(data, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+async function getValidIds(
+  context: RouteContext
+) {
+  const { universeId, postId } =
+    await context.params;
 
   if (
-    !z.string().uuid().safeParse(universeId).success ||
-    !z.string().uuid().safeParse(postId).success
+    !uuidSchema.safeParse(universeId).success ||
+    !uuidSchema.safeParse(postId).success
   ) {
     return null;
   }
 
-  return { universeId, postId };
+  return {
+    universeId,
+    postId,
+  };
 }
 
 async function postExists(
@@ -65,7 +106,9 @@ async function postExists(
   postId: string
 ) {
   const [post] = await db
-    .select({ id: posts.id })
+    .select({
+      id: posts.id,
+    })
     .from(posts)
     .where(
       and(
@@ -83,7 +126,9 @@ async function characterExists(
   characterId: string
 ) {
   const [character] = await db
-    .select({ id: characters.id })
+    .select({
+      id: characters.id,
+    })
     .from(characters)
     .where(
       and(
@@ -95,6 +140,38 @@ async function characterExists(
 
   return Boolean(character);
 }
+
+async function parentCommentExists(
+  postId: string,
+  parentCommentId: string
+) {
+  const [comment] = await db
+    .select({
+      id: postInteractions.id,
+    })
+    .from(postInteractions)
+    .where(
+      and(
+        eq(
+          postInteractions.id,
+          parentCommentId
+        ),
+        eq(
+          postInteractions.postId,
+          postId
+        ),
+        eq(
+          postInteractions.type,
+          "comment"
+        )
+      )
+    )
+    .limit(1);
+
+  return Boolean(comment);
+}
+
+// CARREGAR CURTIDAS E COMENTÁRIOS
 
 export async function GET(
   _request: NextRequest,
@@ -110,9 +187,12 @@ export async function GET(
       );
     }
 
-    if (
-      !(await postExists(ids.universeId, ids.postId))
-    ) {
+    const exists = await postExists(
+      ids.universeId,
+      ids.postId
+    );
+
+    if (!exists) {
       return errorResponse(
         "Publicação não encontrada.",
         404
@@ -124,11 +204,17 @@ export async function GET(
         id: postInteractions.id,
         type: postInteractions.type,
         content: postInteractions.content,
-        characterId: postInteractions.characterId,
-        createdAt: postInteractions.createdAt,
+        characterId:
+          postInteractions.characterId,
+        parentCommentId:
+          postInteractions.parentCommentId,
+        createdAt:
+          postInteractions.createdAt,
         characterName: characters.name,
-        characterUsername: characters.username,
-        characterAvatarUrl: characters.avatarUrl,
+        characterUsername:
+          characters.username,
+        characterAvatarUrl:
+          characters.avatarUrl,
       })
       .from(postInteractions)
       .innerJoin(
@@ -139,10 +225,14 @@ export async function GET(
         )
       )
       .where(
-        eq(postInteractions.postId, ids.postId)
+        eq(
+          postInteractions.postId,
+          ids.postId
+        )
       )
       .orderBy(
-        asc(postInteractions.createdAt)
+        asc(postInteractions.createdAt),
+        asc(postInteractions.id)
       );
 
     const likes = interactions.filter(
@@ -153,19 +243,14 @@ export async function GET(
       (item) => item.type === "comment"
     );
 
-    return NextResponse.json(
-      {
-        likeCount: likes.length,
-        commentCount: comments.length,
-        likedByCharacterIds: likes.map(
-          (item) => item.characterId
-        ),
-        comments,
-      },
-      {
-        headers: { "Cache-Control": "no-store" },
-      }
-    );
+    return successResponse({
+      likeCount: likes.length,
+      commentCount: comments.length,
+      likedByCharacterIds: likes.map(
+        (item) => item.characterId
+      ),
+      comments,
+    });
   } catch (error) {
     console.error(
       "Erro ao carregar interações:",
@@ -178,6 +263,8 @@ export async function GET(
     );
   }
 }
+
+// CRIAR CURTIDAS E COMENTÁRIOS
 
 export async function POST(
   request: NextRequest,
@@ -217,46 +304,61 @@ export async function POST(
 
     const data = parsed.data;
 
-    if (
-      !(await postExists(ids.universeId, ids.postId))
-    ) {
+    const exists = await postExists(
+      ids.universeId,
+      ids.postId
+    );
+
+    if (!exists) {
       return errorResponse(
         "Publicação não encontrada.",
         404
       );
     }
 
-    if (
-      !(await characterExists(
+    const validCharacter =
+      await characterExists(
         ids.universeId,
         data.characterId
-      ))
-    ) {
+      );
+
+    if (!validCharacter) {
       return errorResponse(
         "Personagem não encontrado neste universo.",
         404
       );
     }
 
+    // CURTIDAS
+
     if (data.type === "like") {
       const [existingLike] = await db
-        .select({ id: postInteractions.id })
+        .select({
+          id: postInteractions.id,
+        })
         .from(postInteractions)
         .where(
           and(
-            eq(postInteractions.postId, ids.postId),
+            eq(
+              postInteractions.postId,
+              ids.postId
+            ),
             eq(
               postInteractions.characterId,
               data.characterId
             ),
-            eq(postInteractions.type, "like")
+            eq(
+              postInteractions.type,
+              "like"
+            )
           )
         )
         .limit(1);
 
       if (existingLike) {
-        return NextResponse.json({
-          message: "Este personagem já curtiu o post.",
+        return successResponse({
+          message:
+            "Este personagem já curtiu o post.",
           alreadyLiked: true,
         });
       }
@@ -270,13 +372,33 @@ export async function POST(
         })
         .returning();
 
-      return NextResponse.json(
+      return successResponse(
         {
           interaction,
           message: "Publicação curtida!",
         },
-        { status: 201 }
+        201
       );
+    }
+
+    // COMENTÁRIOS E RESPOSTAS
+
+    const parentCommentId =
+      data.parentCommentId ?? null;
+
+    if (parentCommentId) {
+      const validParent =
+        await parentCommentExists(
+          ids.postId,
+          parentCommentId
+        );
+
+      if (!validParent) {
+        return errorResponse(
+          "O comentário que você está tentando responder não foi encontrado nesta publicação.",
+          404
+        );
+      }
     }
 
     const [interaction] = await db
@@ -286,15 +408,18 @@ export async function POST(
         characterId: data.characterId,
         type: "comment",
         content: data.content,
+        parentCommentId,
       })
       .returning();
 
-    return NextResponse.json(
+    return successResponse(
       {
         interaction,
-        message: "Comentário publicado!",
+        message: parentCommentId
+          ? "Resposta publicada!"
+          : "Comentário publicado!",
       },
-      { status: 201 }
+      201
     );
   } catch (error) {
     console.error(
@@ -308,6 +433,8 @@ export async function POST(
     );
   }
 }
+
+// REMOVER CURTIDAS
 
 export async function DELETE(
   request: NextRequest,
@@ -334,7 +461,8 @@ export async function DELETE(
       );
     }
 
-    const parsed = removeLikeSchema.safeParse(body);
+    const parsed =
+      removeLikeSchema.safeParse(body);
 
     if (!parsed.success) {
       return errorResponse(
@@ -343,21 +471,25 @@ export async function DELETE(
       );
     }
 
-    if (
-      !(await postExists(ids.universeId, ids.postId))
-    ) {
+    const exists = await postExists(
+      ids.universeId,
+      ids.postId
+    );
+
+    if (!exists) {
       return errorResponse(
         "Publicação não encontrada.",
         404
       );
     }
 
-    if (
-      !(await characterExists(
+    const validCharacter =
+      await characterExists(
         ids.universeId,
         parsed.data.characterId
-      ))
-    ) {
+      );
+
+    if (!validCharacter) {
       return errorResponse(
         "Personagem não encontrado neste universo.",
         404
@@ -368,16 +500,22 @@ export async function DELETE(
       .delete(postInteractions)
       .where(
         and(
-          eq(postInteractions.postId, ids.postId),
+          eq(
+            postInteractions.postId,
+            ids.postId
+          ),
           eq(
             postInteractions.characterId,
             parsed.data.characterId
           ),
-          eq(postInteractions.type, "like")
+          eq(
+            postInteractions.type,
+            "like"
+          )
         )
       );
 
-    return NextResponse.json({
+    return successResponse({
       message: "Curtida removida!",
     });
   } catch (error) {
