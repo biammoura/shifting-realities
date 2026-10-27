@@ -167,7 +167,6 @@ export default function CharactersPage() {
     event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
-
     setSaving(true);
     setFormError(null);
 
@@ -339,7 +338,7 @@ export default function CharactersPage() {
                 className="sr-muted"
                 style={{ fontSize: 13, margin: 0 }}
               >
-                Crie as pessoas que viverão sua história.
+                Toque em um personagem para abrir seu perfil.
               </p>
             </div>
 
@@ -399,16 +398,21 @@ export default function CharactersPage() {
               }}
             >
               {characters.map((character, index) => (
-                <article
+                <Link
                   key={character.id}
-                  className="sr-card"
+                  href={`/universes/${universeId}/characters/${character.id}`}
+                  className="sr-card sr-card-interactive"
+                  aria-label={`Abrir perfil de ${character.name}`}
                   style={{
+                    display: "block",
                     padding: 14,
                     borderRadius: 20,
                     border:
                       "1px solid var(--sr-border)",
                     textAlign: "center",
                     overflowWrap: "anywhere",
+                    textDecoration: "none",
+                    color: "var(--sr-text)",
                   }}
                 >
                   <div
@@ -506,7 +510,7 @@ export default function CharactersPage() {
                         : character.bio}
                     </p>
                   )}
-                </article>
+                </Link>
               ))}
 
               <button
@@ -604,7 +608,7 @@ export default function CharactersPage() {
             className="sr-muted"
             style={{ fontSize: 12, marginBottom: 0 }}
           >
-            Em breve, seus personagens terão perfis,
+            Em breve, seus personagens terão
             relacionamentos, memórias e interações.
           </p>
         </div>
