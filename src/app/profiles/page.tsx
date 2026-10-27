@@ -1,28 +1,156 @@
 
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
+  Check,
+  LoaderCircle,
   LockKeyhole,
   Plus,
   Sparkles,
   UserRound,
   UsersRound,
   WandSparkles,
+  X,
 } from "lucide-react";
 
 type Profile = {
   id: string;
   name: string;
-  avatar: string;
-  color: string;
+  avatarUrl: string | null;
   hasPin: boolean;
 };
 
+const avatarOptions = ["🌸", "🦋", "🎀", "✨", "🌷", "🩷", "🌙", "🪄"];
+
+const avatarColors = [
+  "#fce7f3",
+  "#ede9fe",
+  "#dbeafe",
+  "#dcfce7",
+  "#fef3c7",
+  "#fce7e7",
+];
+
+function profileColor(index: number) {
+  return avatarColors[index % avatarColors.length];
+}
+
 export default function ProfilesPage() {
-  const [profiles] = useState<Profile[]>([]);
+  const router = useRouter();
+
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [name, setName] = useState("");
+  const [avatar, setAvatar] = useState("🌸");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadProfiles = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/profiles", {
+        cache: "no-store",
+      });
+
+      const data: {
+        profiles?: Profile[];
+        error?: string;
+      } = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erro ao carregar perfis.");
+      }
+
+      setProfiles(data.profiles || []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível carregar os perfis."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
+
+  function openCreate() {
+    setName("");
+    setAvatar("🌸");
+    setError(null);
+    setNotice(null);
+    setShowCreate(true);
+  }
+
+  function enterProfile(profile: Profile) {
+    if (profile.hasPin) {
+      setNotice(
+        "Este perfil possui PIN. A verificação será implementada em uma próxima etapa."
+      );
+      return;
+    }
+
+    router.push(`/profiles/${profile.id}/universes`);
+  }
+
+  async function createProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const cleanName = name.trim();
+
+    if (!cleanName || cleanName.length > 100) {
+      setError("Digite um nome com até 100 caracteres.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/profiles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: cleanName,
+        }),
+      });
+
+      const data: {
+        profile?: Profile;
+        error?: string;
+      } = await response.json();
+
+      if (!response.ok || !data.profile) {
+        throw new Error(data.error || "Erro ao criar perfil.");
+      }
+
+      const createdProfile = data.profile;
+      setProfiles((current) => [...current, createdProfile]);
+      setShowCreate(false);
+      setNotice(`Perfil "${createdProfile.name}" criado com sucesso!`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível criar o perfil."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <main
@@ -60,10 +188,7 @@ export default function ProfilesPage() {
           <WandSparkles size={38} strokeWidth={1.6} />
         </div>
 
-        <div
-          className="sr-badge"
-          style={{ marginBottom: 16 }}
-        >
+        <div className="sr-badge" style={{ marginBottom: 16 }}>
           <Sparkles size={14} />
           Live a thousand lives
         </div>
@@ -84,10 +209,7 @@ export default function ProfilesPage() {
 
         <p
           className="sr-muted"
-          style={{
-            fontSize: 16,
-            marginBottom: 40,
-          }}
+          style={{ fontSize: 16, marginBottom: 40 }}
         >
           Um universo nunca é suficiente.
         </p>
@@ -104,28 +226,28 @@ export default function ProfilesPage() {
             className="sr-flex-center"
             style={{ gap: 10, marginBottom: 12 }}
           >
-            <UsersRound
-              size={24}
-              color="var(--sr-primary)"
-            />
-            <h2
-              style={{
-                fontSize: 24,
-                margin: 0,
-              }}
-            >
+            <UsersRound size={24} color="var(--sr-primary)" />
+            <h2 style={{ fontSize: 24, margin: 0 }}>
               Quem vai viver uma nova realidade?
             </h2>
           </div>
 
-          <p
-            className="sr-muted"
-            style={{ marginBottom: 30 }}
-          >
+          <p className="sr-muted" style={{ marginBottom: 30 }}>
             Escolha um perfil para continuar sua história.
           </p>
 
-          {profiles.length > 0 ? (
+          {loading ? (
+            <div
+              className="sr-flex-center"
+              style={{ gap: 10, padding: 35 }}
+            >
+              <LoaderCircle
+                size={22}
+                color="var(--sr-primary)"
+              />
+              <span className="sr-muted">Carregando perfis...</span>
+            </div>
+          ) : profiles.length > 0 ? (
             <div
               style={{
                 display: "grid",
@@ -135,29 +257,32 @@ export default function ProfilesPage() {
                 marginBottom: 28,
               }}
             >
-              {profiles.map((profile) => (
+              {profiles.map((profile, index) => (
                 <button
                   key={profile.id}
                   type="button"
                   className="sr-card sr-card-interactive"
+                  onClick={() => enterProfile(profile)}
                   style={{
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
                     gap: 12,
                     cursor: "pointer",
+                    padding: 16,
+                    border: "1px solid var(--sr-border)",
+                    background: "var(--sr-surface)",
+                    color: "var(--sr-text)",
                   }}
-                  disabled
-                  title="A seleção será ativada com o sistema de perfis."
                 >
                   <div
                     className="sr-avatar sr-avatar-xl"
                     style={{
-                      background: profile.color,
+                      background: profileColor(index),
                       fontSize: 32,
                     }}
                   >
-                    {profile.avatar}
+                    {avatarOptions[index % avatarOptions.length]}
                   </div>
 
                   <strong>{profile.name}</strong>
@@ -200,10 +325,7 @@ export default function ProfilesPage() {
 
               <p
                 className="sr-muted"
-                style={{
-                  fontSize: 14,
-                  marginBottom: 0,
-                }}
+                style={{ fontSize: 14, marginBottom: 0 }}
               >
                 Crie seu primeiro perfil e prepare-se
                 para explorar infinitas realidades.
@@ -214,8 +336,8 @@ export default function ProfilesPage() {
           <button
             type="button"
             className="sr-button sr-button-full"
-            disabled
-            title="A criação de perfis será ativada após a integração com o banco de dados."
+            onClick={openCreate}
+            disabled={loading || saving}
             style={{
               maxWidth: 340,
               margin: "0 auto",
@@ -228,15 +350,55 @@ export default function ProfilesPage() {
 
           <p
             className="sr-small sr-muted"
-            style={{
-              marginTop: 18,
-              marginBottom: 0,
-            }}
+            style={{ marginTop: 18, marginBottom: 0 }}
           >
             Cada perfil terá seus próprios universos,
             personagens, histórias e configurações.
           </p>
         </section>
+
+        {error && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 20,
+              padding: 16,
+              borderRadius: 14,
+              background: "#fee2e2",
+              color: "#991b1b",
+            }}
+          >
+            {error}
+            <button
+              type="button"
+              onClick={() => void loadProfiles()}
+              style={{
+                marginLeft: 12,
+                background: "transparent",
+                border: 0,
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+            >
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
+        {notice && (
+          <div
+            role="status"
+            style={{
+              marginTop: 20,
+              padding: 16,
+              borderRadius: 14,
+              background: "var(--sr-primary-soft)",
+            }}
+          >
+            <Check size={16} style={{ display: "inline" }} />{" "}
+            {notice}
+          </div>
+        )}
 
         <div
           style={{
@@ -251,7 +413,6 @@ export default function ProfilesPage() {
             <Sparkles size={13} style={{ display: "inline" }} />
             {" "}Universos ilimitados*
           </span>
-
           <span className="sr-small sr-muted">
             <LockKeyhole size={13} style={{ display: "inline" }} />
             {" "}PIN opcional
@@ -272,9 +433,8 @@ export default function ProfilesPage() {
             <div className="sr-flex-between">
               <span>
                 <strong>Bem-vinda ao S.R.!</strong>{" "}
-                Estamos preparando seu espaço de histórias.
+                Seu espaço de histórias está tomando forma.
               </span>
-
               <button
                 type="button"
                 className="sr-button-ghost"
@@ -295,15 +455,187 @@ export default function ProfilesPage() {
 
         <p
           className="sr-small sr-muted"
-          style={{
-            marginTop: 24,
-            marginBottom: 0,
-          }}
+          style={{ marginTop: 24, marginBottom: 0 }}
         >
           *A quantidade de universos dependerá da capacidade
           de armazenamento e dos limites dos serviços utilizados.
         </p>
       </div>
+
+      {showCreate && (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            background: "rgba(31, 20, 35, 0.55)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 18,
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-profile-title"
+            className="sr-card sr-animate-in"
+            style={{
+              width: "100%",
+              maxWidth: 440,
+              padding: 28,
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              className="sr-flex-between"
+              style={{ marginBottom: 22 }}
+            >
+              <h2
+                id="create-profile-title"
+                style={{ fontSize: 23, margin: 0 }}
+              >
+                Criar meu perfil 🌸
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                aria-label="Fechar"
+                disabled={saving}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--sr-text)",
+                  cursor: "pointer",
+                }}
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <form onSubmit={createProfile}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  className="sr-avatar sr-avatar-xl"
+                  style={{
+                    background: "#fce7f3",
+                    fontSize: 38,
+                    width: 88,
+                    height: 88,
+                  }}
+                >
+                  {avatar}
+                </div>
+              </div>
+
+              <p
+                className="sr-muted"
+                style={{
+                  textAlign: "center",
+                  fontSize: 13,
+                  marginBottom: 12,
+                }}
+              >
+                Escolha seu avatar
+              </p>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: 10,
+                  marginBottom: 24,
+                }}
+              >
+                {avatarOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setAvatar(option)}
+                    aria-label={`Avatar ${option}`}
+                    aria-pressed={avatar === option}
+                    style={{
+                      padding: 10,
+                      fontSize: 25,
+                      borderRadius: 14,
+                      border:
+                        avatar === option
+                          ? "2px solid var(--sr-primary)"
+                          : "1px solid var(--sr-border)",
+                      background:
+                        avatar === option
+                          ? "var(--sr-primary-soft)"
+                          : "var(--sr-surface)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+
+              <label
+                htmlFor="profile-name"
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Nome do perfil
+              </label>
+
+              <input
+                id="profile-name"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                maxLength={100}
+                placeholder="Como você quer ser chamada?"
+                autoComplete="off"
+                required
+                style={{
+                  width: "100%",
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  border: "1px solid var(--sr-border)",
+                  background: "var(--sr-surface)",
+                  color: "var(--sr-text)",
+                  fontSize: 16,
+                  marginBottom: 22,
+                  boxSizing: "border-box",
+                }}
+              />
+
+              <button
+                type="submit"
+                className="sr-button sr-button-full"
+                disabled={saving || !name.trim()}
+              >
+                {saving ? (
+                  <>
+                    <LoaderCircle size={18} />
+                    Salvando...
+                  </>
+                ) : (
+                  <>
+                    <Check size={18} />
+                    Criar perfil
+                  </>
+                )}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
