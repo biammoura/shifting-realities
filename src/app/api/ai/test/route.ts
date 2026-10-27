@@ -12,7 +12,7 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: "GEMINI_API_KEY não está configurada.",
+        error: "GEMINI_API_KEY não configurada.",
       },
       { status: 500 }
     );
@@ -22,16 +22,15 @@ export async function GET() {
     const ai = new GoogleGenAI({ apiKey });
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash-lite",
       contents:
-        "Responda em português, com apenas uma frase curta, confirmando que a inteligência artificial do aplicativo Shifting Realities está funcionando.",
+        "Você está testando a conexão de um aplicativo de RPG chamado Shifting Realities. Responda somente: Conexão com Shifting Realities funcionando!",
     });
 
     return NextResponse.json({
       success: true,
-      message:
-        response.text ||
-        "O Gemini respondeu, mas não retornou texto.",
+      model: "gemini-3.5-flash-lite",
+      message: response.text || "Resposta sem texto.",
     });
   } catch (error) {
     console.error("Erro ao testar Gemini:", error);
@@ -40,7 +39,7 @@ export async function GET() {
       {
         success: false,
         error:
-          "Não foi possível conectar ao Gemini. Verifique a chave, o modelo e os limites de uso.",
+          "O Gemini não conseguiu responder. Consulte os logs da Vercel.",
       },
       { status: 500 }
     );
