@@ -64,9 +64,7 @@ export default function UniversePage() {
     try {
       const response = await fetch(
         `/api/universes/${encodeURIComponent(universeId)}`,
-        {
-          cache: "no-store",
-        }
+        { cache: "no-store" }
       );
 
       const data: UniverseResponse = await response.json();
@@ -182,11 +180,8 @@ export default function UniversePage() {
             <LoaderCircle
               size={32}
               color="var(--sr-primary)"
-              style={{
-                marginBottom: 16,
-              }}
+              style={{ marginBottom: 16 }}
             />
-
             <p className="sr-muted">
               Abrindo sua realidade...
             </p>
@@ -255,9 +250,7 @@ export default function UniversePage() {
 
               <div
                 className="sr-badge"
-                style={{
-                  marginBottom: 16,
-                }}
+                style={{ marginBottom: 16 }}
               >
                 <Heart size={13} />
                 Sua realidade
@@ -412,26 +405,54 @@ export default function UniversePage() {
             {tabs.map((tab) => {
               const Icon = tab.icon;
 
-              return (
-                <div
-                  key={tab.name}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 5,
-                    color:
-                      tab.name === "Início"
-                        ? "var(--sr-primary)"
-                        : "var(--sr-text-muted)",
-                  }}
-                >
-                  <Icon size={22} />
+              const href =
+                tab.name === "Personagens"
+                  ? `/universes/${universeId}/characters`
+                  : tab.name === "Início"
+                    ? `/universes/${universeId}`
+                    : null;
 
+              const content = (
+                <>
+                  <Icon size={22} />
                   <span style={{ fontSize: 10 }}>
                     {tab.name}
                   </span>
-                </div>
+                </>
+              );
+
+              const itemStyle: React.CSSProperties = {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 5,
+                color:
+                  tab.name === "Início"
+                    ? "var(--sr-primary)"
+                    : "var(--sr-text-muted)",
+                textDecoration: "none",
+                minWidth: 54,
+                minHeight: 43,
+              };
+
+              return href ? (
+                <Link
+                  key={tab.name}
+                  href={href}
+                  style={itemStyle}
+                  aria-label={tab.name}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <span
+                  key={tab.name}
+                  style={itemStyle}
+                  aria-label={`${tab.name} em desenvolvimento`}
+                >
+                  {content}
+                </span>
               );
             })}
           </div>
