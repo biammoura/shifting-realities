@@ -353,14 +353,18 @@ export default function UniversesPage() {
               }}
             >
               {universes.map((universe, index) => (
-                <div
+                <Link
                   key={universe.id}
-                  className="sr-card"
+                  href={`/universes/${universe.id}`}
+                  className="sr-card sr-card-interactive"
                   style={{
                     padding: 10,
                     borderRadius: 19,
                     border: "1px solid var(--sr-border)",
                     overflow: "hidden",
+                    textDecoration: "none",
+                    color: "var(--sr-text)",
+                    display: "block",
                   }}
                 >
                   <div
@@ -417,7 +421,7 @@ export default function UniversesPage() {
                         : universe.description}
                     </p>
                   )}
-                </div>
+                </Link>
               ))}
 
               <button
