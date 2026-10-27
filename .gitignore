@@ -1,0 +1,62 @@
+
+# Dependências
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js
+/.next/
+/out/
+/build/
+/dist/
+
+# Arquivos de ambiente e credenciais
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Configurações locais da Vercel
+.vercel
+
+# Arquivos temporários
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Cobertura de testes
+/coverage/
+
+# Cache
+.cache/
+.turbo/
+
+# Arquivos locais de banco de dados
+*.sqlite
+*.sqlite3
+*.db
+
+# Chaves e certificados privados
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Arquivos temporários de editores
+*.swp
+*.swo
+*~
+
+# Arquivos de backup
+*.bak
+*.backup
