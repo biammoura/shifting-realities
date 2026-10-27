@@ -10,6 +10,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 const timestamps = {
@@ -203,7 +204,7 @@ export const posts = pgTable(
 );
 
 // INTERAÇÕES DOS POSTS
-// Agora os comentários podem responder a outros comentários.
+// Permite respostas vinculadas a outros comentários.
 
 export const postInteractions = pgTable(
   "post_interactions",
@@ -229,9 +230,12 @@ export const postInteractions = pgTable(
     content: text("content"),
 
     parentCommentId: uuid("parent_comment_id")
-      .references(() => postInteractions.id, {
-        onDelete: "set null",
-      }),
+      .references(
+        (): AnyPgColumn => postInteractions.id,
+        {
+          onDelete: "set null",
+        }
+      ),
 
     ...timestamps,
   },
