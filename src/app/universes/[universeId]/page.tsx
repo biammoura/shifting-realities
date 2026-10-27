@@ -52,10 +52,13 @@ export default function UniversePage() {
   const params = useParams<{ universeId: string }>();
   const universeId = params.universeId;
 
-  const [universe, setUniverse] = useState<Universe | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [universe, setUniverse] =
+    useState<Universe | null>(null);
+  const [profile, setProfile] =
+    useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] =
+    useState<string | null>(null);
 
   const loadUniverse = useCallback(async () => {
     setLoading(true);
@@ -67,11 +70,17 @@ export default function UniversePage() {
         { cache: "no-store" }
       );
 
-      const data: UniverseResponse = await response.json();
+      const data: UniverseResponse =
+        await response.json();
 
-      if (!response.ok || !data.universe || !data.profile) {
+      if (
+        !response.ok ||
+        !data.universe ||
+        !data.profile
+      ) {
         throw new Error(
-          data.error || "Não foi possível carregar este universo."
+          data.error ||
+            "Não foi possível carregar este universo."
         );
       }
 
@@ -95,6 +104,10 @@ export default function UniversePage() {
   const backHref = universe
     ? `/profiles/${universe.profileId}/universes`
     : "/profiles";
+
+  const feedHref = `/universes/${universeId}/feed`;
+  const charactersHref =
+    `/universes/${universeId}/characters`;
 
   return (
     <main
@@ -336,15 +349,70 @@ export default function UniversePage() {
                 style={{
                   fontSize: 14,
                   lineHeight: 1.7,
-                  marginBottom: 0,
+                  marginBottom: 20,
                 }}
               >
-                Aqui aparecerão as publicações,
-                interações e acontecimentos da sua
-                realidade. Em breve, seus personagens
-                poderão compartilhar suas próprias
-                histórias.
+                Acompanhe as publicações dos personagens
+                e compartilhe os acontecimentos da sua
+                realidade.
               </p>
+
+              <Link
+                href={feedHref}
+                className="sr-button"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  textDecoration: "none",
+                }}
+              >
+                <Home size={18} />
+                Abrir meu feed
+              </Link>
+            </section>
+
+            <section
+              className="sr-card"
+              style={{
+                padding: 22,
+                marginBottom: 20,
+              }}
+            >
+              <h2
+                style={{
+                  fontSize: 19,
+                  marginBottom: 12,
+                }}
+              >
+                🌷 Seus personagens
+              </h2>
+
+              <p
+                className="sr-muted"
+                style={{
+                  fontSize: 14,
+                  lineHeight: 1.7,
+                  marginBottom: 20,
+                }}
+              >
+                Veja os perfis, personalidades e
+                histórias dos personagens deste universo.
+              </p>
+
+              <Link
+                href={charactersHref}
+                className="sr-button"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  textDecoration: "none",
+                }}
+              >
+                <Users size={18} />
+                Ver personagens
+              </Link>
             </section>
 
             <div
@@ -407,9 +475,10 @@ export default function UniversePage() {
 
               const href =
                 tab.name === "Personagens"
-                  ? `/universes/${universeId}/characters`
-                  : tab.name === "Início"
-                    ? `/universes/${universeId}`
+                  ? charactersHref
+                  : tab.name === "Início" ||
+                      tab.name === "Criar"
+                    ? feedHref
                     : null;
 
               const content = (
@@ -428,7 +497,8 @@ export default function UniversePage() {
                 justifyContent: "center",
                 gap: 5,
                 color:
-                  tab.name === "Início"
+                  tab.name === "Início" ||
+                  tab.name === "Criar"
                     ? "var(--sr-primary)"
                     : "var(--sr-text-muted)",
                 textDecoration: "none",
