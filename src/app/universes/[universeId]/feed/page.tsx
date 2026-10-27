@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   type FormEvent,
+  type CSSProperties,
 } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -20,6 +21,7 @@ import {
   Sparkles,
   UserRound,
   Users,
+  WandSparkles,
 } from "lucide-react";
 
 type Character = {
@@ -66,6 +68,25 @@ type Interactions = {
   comments: Comment[];
 };
 
+const inputStyle: CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: 13,
+  borderRadius: 13,
+  border: "1px solid var(--sr-border)",
+  background: "var(--sr-surface)",
+  color: "var(--sr-text)",
+  fontFamily: "inherit",
+  fontSize: 16,
+};
+
+const emptyInteractions: Interactions = {
+  likeCount: 0,
+  commentCount: 0,
+  likedByCharacterIds: [],
+  comments: [],
+};
+
 function Avatar({
   name,
   image,
@@ -109,7 +130,6 @@ function Avatar({
 
 function formatDate(value: string) {
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return "";
 
   return date.toLocaleString("pt-BR", {
@@ -121,28 +141,10 @@ function formatDate(value: string) {
   });
 }
 
-const inputStyle = {
-  width: "100%",
-  boxSizing: "border-box" as const,
-  padding: 13,
-  borderRadius: 13,
-  border: "1px solid var(--sr-border)",
-  background: "var(--sr-surface)",
-  color: "var(--sr-text)",
-  fontFamily: "inherit",
-  fontSize: 16,
-};
-
-const emptyInteractions: Interactions = {
-  likeCount: 0,
-  commentCount: 0,
-  likedByCharacterIds: [],
-  comments: [],
-};
-
 export default function FeedPage() {
-  const params = useParams<{ universeId: string }>();
-  const universeId = params.universeId;
+  const { universeId } = useParams<{
+    universeId: string;
+  }>();
 
   const apiBase = `/api/universes/${encodeURIComponent(
     universeId
@@ -160,19 +162,15 @@ export default function FeedPage() {
   const [interactions, setInteractions] = useState<
     Record<string, Interactions>
   >({});
-
   const [openComments, setOpenComments] = useState<
     Record<string, boolean>
   >({});
-
   const [commentDrafts, setCommentDrafts] = useState<
     Record<string, string>
   >({});
-
   const [busyPosts, setBusyPosts] = useState<
     Record<string, boolean>
   >({});
-
   const [interactionErrors, setInteractionErrors] =
     useState<Record<string, string>>({});
 
@@ -183,6 +181,32 @@ export default function FeedPage() {
     useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(
     null
+  );
+
+  // Estados da geração com inteligência artificial
+  const [showAi, setShowAi] = useState(false);
+  const [aiCharacterId, setAiCharacterId] =
+    useState("");
+  const [aiInstruction, setAiInstruction] =
+    useState("");
+  const [aiDraft, setAiDraft] = useState("");
+  const [aiGenerating, setAiGenerating] =
+    useState(false);
+  const [aiError, setAiError] =
+    useState<string | null>(null);
+
+  const aiCharacters = characters.filter(
+    (character) =>
+      character.isAiControlled &&
+      !character.isAvatar
+  );
+
+  const selectedCharacter = characters.find(
+    (character) => character.id === authorId
+  );
+
+  const selectedAiCharacter = aiCharacters.find(
+    (character) => character.id === aiCharacterId
   );
 
   const interactionUrl = useCallback(
@@ -241,16 +265,9 @@ export default function FeedPage() {
           }),
         ]);
 
-      const feedData: {
-        universe?: Universe;
-        posts?: Post[];
-        error?: string;
-      } = await feedResponse.json();
-
-      const charactersData: {
-        characters?: Character[];
-        error?: string;
-      } = await charactersResponse.json();
+      const feedData = await feedResponse.json();
+      const charactersData =
+        await charactersResponse.json();
 
       if (!feedResponse.ok || !feedData.universe) {
         throw new Error(
@@ -266,18 +283,17 @@ export default function FeedPage() {
         );
       }
 
-      const loadedCharacters =
+      const loadedCharacters: Character[] =
         charactersData.characters || [];
-
-      const loadedPosts = feedData.posts || [];
+      const loadedPosts: Post[] =
+        feedData.posts || [];
 
       setUniverse(feedData.universe);
-      setPosts(loadedPosts);
       setCharacters(loadedCharacters);
+      setPosts(loadedPosts);
 
       setAuthorId((current) => {
         if (
-          current &&
           loadedCharacters.some(
             (character) => character.id === current
           )
@@ -294,6 +310,20 @@ export default function FeedPage() {
         );
       });
 
+      const eligible = loadedCharacters.filter(
+        (character) =>
+          character.isAiControlled &&
+          !character.isAvatar
+      );
+
+      setAiCharacterId((current) =>
+        eligible.some(
+          (character) => character.id === current
+        )
+          ? current
+          : eligible[0]?.id || ""
+      );
+
       const results = await Promise.allSettled(
         loadedPosts.map(async (post) => ({
           postId: post.id,
@@ -305,7 +335,6 @@ export default function FeedPage() {
         string,
         Interactions
       > = {};
-
       const nextErrors: Record<string, string> = {};
 
       results.forEach((result, index) => {
@@ -324,7 +353,7 @@ export default function FeedPage() {
       setError(
         err instanceof Error
           ? err.message
-          : "Ocorreu um erro ao carregar o feed."
+          : "Erro ao carregar o feed."
       );
     } finally {
       setLoading(false);
@@ -334,6 +363,67 @@ export default function FeedPage() {
   useEffect(() => {
     void loadFeed();
   }, [loadFeed]);
+
+  async function generateAiPost() {
+    if (!aiCharacterId || aiGenerating) return;
+
+    setAiGenerating(true);
+    setAiError(null);
+    setAiDraft("");
+
+    try {
+      const response = await fetch(
+        `${apiBase}/ai/generate-post`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            characterId: aiCharacterId,
+            instruction: aiInstruction.trim(),
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.draft) {
+        throw new Error(
+          data.error ||
+            "Não foi possível gerar a publicação."
+        );
+      }
+
+      setAiDraft(data.draft);
+    } catch (err) {
+      setAiError(
+        err instanceof Error
+          ? err.message
+          : "Erro ao gerar com IA."
+      );
+    } finally {
+      setAiGenerating(false);
+    }
+  }
+
+  function useAiDraft() {
+    if (!aiDraft.trim() || !aiCharacterId) return;
+
+    setAuthorId(aiCharacterId);
+    setContent(aiDraft);
+    setAiDraft("");
+    setShowAi(false);
+    setNotice(
+      "Rascunho preparado! Revise e toque em Publicar quando quiser. ♡"
+    );
+    setPostError(null);
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
 
   async function publishPost(
     event: FormEvent<HTMLFormElement>
@@ -363,10 +453,7 @@ export default function FeedPage() {
         }
       );
 
-      const data: {
-        post?: Post;
-        error?: string;
-      } = await response.json();
+      const data = await response.json();
 
       if (!response.ok || !data.post) {
         throw new Error(
@@ -375,7 +462,7 @@ export default function FeedPage() {
         );
       }
 
-      const newPost = data.post;
+      const newPost: Post = data.post;
 
       setPosts((current) => [
         newPost,
@@ -384,7 +471,11 @@ export default function FeedPage() {
 
       setInteractions((current) => ({
         ...current,
-        [newPost.id]: { ...emptyInteractions },
+        [newPost.id]: {
+          ...emptyInteractions,
+          likedByCharacterIds: [],
+          comments: [],
+        },
       }));
 
       setContent("");
@@ -546,10 +637,6 @@ export default function FeedPage() {
       }));
     }
   }
-
-  const selectedCharacter = characters.find(
-    (character) => character.id === authorId
-  );
 
   return (
     <main
@@ -843,9 +930,7 @@ export default function FeedPage() {
                     id="post-content"
                     value={content}
                     onChange={(event) =>
-                      setContent(
-                        event.target.value
-                      )
+                      setContent(event.target.value)
                     }
                     maxLength={5000}
                     rows={4}
@@ -885,9 +970,7 @@ export default function FeedPage() {
                     >
                       {publishing ? (
                         <>
-                          <LoaderCircle
-                            size={17}
-                          />
+                          <LoaderCircle size={17} />
                           Publicando...
                         </>
                       ) : (
@@ -927,11 +1010,276 @@ export default function FeedPage() {
               )}
             </section>
 
+            {/* Gerador de publicações com IA */}
+            <section
+              className="sr-card"
+              style={{
+                padding: 20,
+                marginBottom: 21,
+                border:
+                  "1px solid var(--sr-border)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 12,
+                }}
+              >
+                <WandSparkles
+                  size={23}
+                  color="var(--sr-primary)"
+                />
+                <h2
+                  style={{
+                    fontSize: 18,
+                    margin: 0,
+                  }}
+                >
+                  Personagens com IA ✨
+                </h2>
+              </div>
+
+              <p
+                className="sr-muted"
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                }}
+              >
+                Peça para um personagem criar uma
+                publicação usando sua personalidade
+                e sua história.
+              </p>
+
+              <button
+                type="button"
+                className="sr-button"
+                onClick={() =>
+                  setShowAi((current) => !current)
+                }
+              >
+                <Sparkles size={17} />
+                {showAi
+                  ? "Fechar gerador"
+                  : "Gerar com IA ✨"}
+              </button>
+
+              {showAi && (
+                <div
+                  style={{
+                    marginTop: 20,
+                    padding: 16,
+                    borderRadius: 16,
+                    background:
+                      "var(--sr-surface-secondary)",
+                  }}
+                >
+                  {aiCharacters.length === 0 ? (
+                    <p
+                      className="sr-muted"
+                      style={{ fontSize: 13 }}
+                    >
+                      Você precisa de pelo menos um
+                      personagem controlado pela IA,
+                      que não seja seu avatar.
+                    </p>
+                  ) : (
+                    <>
+                      <label
+                        htmlFor="ai-character"
+                        style={{
+                          display: "block",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          marginBottom: 8,
+                        }}
+                      >
+                        Qual personagem vai escrever?
+                      </label>
+
+                      <select
+                        id="ai-character"
+                        value={aiCharacterId}
+                        onChange={(event) => {
+                          setAiCharacterId(
+                            event.target.value
+                          );
+                          setAiDraft("");
+                          setAiError(null);
+                        }}
+                        style={{
+                          ...inputStyle,
+                          marginBottom: 15,
+                        }}
+                      >
+                        {aiCharacters.map(
+                          (character) => (
+                            <option
+                              key={character.id}
+                              value={character.id}
+                            >
+                              {character.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+
+                      <label
+                        htmlFor="ai-instruction"
+                        style={{
+                          display: "block",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          marginBottom: 8,
+                        }}
+                      >
+                        Orientação para a IA
+                        (opcional)
+                      </label>
+
+                      <textarea
+                        id="ai-instruction"
+                        rows={3}
+                        maxLength={1000}
+                        value={aiInstruction}
+                        onChange={(event) =>
+                          setAiInstruction(
+                            event.target.value
+                          )
+                        }
+                        placeholder="Ex.: Está irritado com alguma coisa que aconteceu hoje..."
+                        style={{
+                          ...inputStyle,
+                          resize: "vertical",
+                          marginBottom: 12,
+                        }}
+                      />
+
+                      <button
+                        type="button"
+                        className="sr-button"
+                        disabled={
+                          aiGenerating ||
+                          !aiCharacterId
+                        }
+                        onClick={() =>
+                          void generateAiPost()
+                        }
+                      >
+                        {aiGenerating ? (
+                          <>
+                            <LoaderCircle size={17} />
+                            Gerando...
+                          </>
+                        ) : (
+                          <>
+                            <WandSparkles size={17} />
+                            Criar rascunho
+                          </>
+                        )}
+                      </button>
+
+                      {aiError && (
+                        <p
+                          role="alert"
+                          style={{
+                            color: "#b91c1c",
+                            fontSize: 13,
+                            marginTop: 12,
+                          }}
+                        >
+                          {aiError}
+                        </p>
+                      )}
+
+                      {aiDraft && (
+                        <div
+                          style={{
+                            marginTop: 18,
+                            padding: 16,
+                            borderRadius: 14,
+                            background:
+                              "var(--sr-surface)",
+                            border:
+                              "1px solid var(--sr-border)",
+                          }}
+                        >
+                          <p
+                            style={{
+                              fontWeight: 700,
+                              fontSize: 13,
+                              marginBottom: 10,
+                            }}
+                          >
+                            Rascunho de{" "}
+                            {selectedAiCharacter?.name}
+                          </p>
+
+                          <textarea
+                            aria-label="Editar rascunho da IA"
+                            value={aiDraft}
+                            maxLength={500}
+                            rows={5}
+                            onChange={(event) =>
+                              setAiDraft(
+                                event.target.value
+                              )
+                            }
+                            style={{
+                              ...inputStyle,
+                              resize: "vertical",
+                              lineHeight: 1.7,
+                            }}
+                          />
+
+                          <p
+                            className="sr-muted"
+                            style={{
+                              fontSize: 11,
+                              marginTop: 7,
+                            }}
+                          >
+                            {aiDraft.length}/500
+                          </p>
+
+                          <button
+                            type="button"
+                            className="sr-button"
+                            disabled={!aiDraft.trim()}
+                            onClick={useAiDraft}
+                          >
+                            <Feather size={16} />
+                            Usar este rascunho
+                          </button>
+
+                          <p
+                            className="sr-muted"
+                            style={{
+                              fontSize: 12,
+                              marginTop: 12,
+                              marginBottom: 0,
+                            }}
+                          >
+                            O texto será colocado no
+                            formulário de publicação.
+                            Nada será publicado sem
+                            você confirmar.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+
             <div
               style={{
                 display: "flex",
-                justifyContent:
-                  "space-between",
+                justifyContent: "space-between",
                 alignItems: "center",
                 marginBottom: 15,
               }}
@@ -975,7 +1323,6 @@ export default function FeedPage() {
                   style={{
                     fontSize: 13,
                     lineHeight: 1.7,
-                    margin: 0,
                   }}
                 >
                   Ainda não existem publicações.
@@ -990,8 +1337,7 @@ export default function FeedPage() {
                 }}
               >
                 {posts.map((post) => {
-                  const info =
-                    interactions[post.id];
+                  const info = interactions[post.id];
 
                   const liked = Boolean(
                     authorId &&
@@ -1000,13 +1346,13 @@ export default function FeedPage() {
                       )
                   );
 
-                  const commentsOpen =
-                    Boolean(
-                      openComments[post.id]
-                    );
+                  const commentsOpen = Boolean(
+                    openComments[post.id]
+                  );
 
-                  const busy =
-                    Boolean(busyPosts[post.id]);
+                  const busy = Boolean(
+                    busyPosts[post.id]
+                  );
 
                   return (
                     <article
@@ -1017,8 +1363,7 @@ export default function FeedPage() {
                       <div
                         style={{
                           display: "flex",
-                          alignItems:
-                            "flex-start",
+                          alignItems: "flex-start",
                           gap: 12,
                           marginBottom: 15,
                         }}
@@ -1026,14 +1371,11 @@ export default function FeedPage() {
                         <Link
                           href={`/universes/${universeId}/characters/${post.authorId}`}
                           style={{
-                            textDecoration:
-                              "none",
+                            textDecoration: "none",
                           }}
                         >
                           <Avatar
-                            name={
-                              post.authorName
-                            }
+                            name={post.authorName}
                             image={
                               post.authorAvatarUrl
                             }
@@ -1052,8 +1394,7 @@ export default function FeedPage() {
                               color:
                                 "var(--sr-text)",
                               fontWeight: 700,
-                              textDecoration:
-                                "none",
+                              textDecoration: "none",
                               fontSize: 14,
                             }}
                           >
@@ -1065,8 +1406,7 @@ export default function FeedPage() {
                             style={{
                               fontSize: 12,
                               margin: "3px 0",
-                              overflowWrap:
-                                "anywhere",
+                              overflowWrap: "anywhere",
                             }}
                           >
                             @{post.authorUsername}
@@ -1095,10 +1435,8 @@ export default function FeedPage() {
                         style={{
                           fontSize: 15,
                           lineHeight: 1.8,
-                          whiteSpace:
-                            "pre-wrap",
-                          overflowWrap:
-                            "anywhere",
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
                           marginBottom: 18,
                         }}
                       >
@@ -1123,21 +1461,17 @@ export default function FeedPage() {
                             !info
                           }
                           onClick={() =>
-                            void toggleLike(
-                              post.id
-                            )
+                            void toggleLike(post.id)
                           }
                           aria-pressed={liked}
                           style={{
                             border: "none",
-                            background:
-                              "transparent",
+                            background: "transparent",
                             color: liked
                               ? "#e85b91"
                               : "var(--sr-text-muted)",
                             display: "flex",
-                            alignItems:
-                              "center",
+                            alignItems: "center",
                             gap: 7,
                             cursor: "pointer",
                             fontSize: 13,
@@ -1152,8 +1486,7 @@ export default function FeedPage() {
                                 : "none"
                             }
                           />
-                          {info?.likeCount ??
-                            "—"}{" "}
+                          {info?.likeCount ?? "—"}{" "}
                           Curtidas
                         </button>
 
@@ -1164,32 +1497,25 @@ export default function FeedPage() {
                               (previous) => ({
                                 ...previous,
                                 [post.id]:
-                                  !previous[
-                                    post.id
-                                  ],
+                                  !previous[post.id],
                               })
                             )
                           }
                           style={{
                             border: "none",
-                            background:
-                              "transparent",
+                            background: "transparent",
                             color:
                               "var(--sr-text-muted)",
                             display: "flex",
-                            alignItems:
-                              "center",
+                            alignItems: "center",
                             gap: 7,
                             cursor: "pointer",
                             fontSize: 13,
                             padding: 4,
                           }}
                         >
-                          <MessageCircle
-                            size={19}
-                          />
-                          {info?.commentCount ??
-                            "—"}{" "}
+                          <MessageCircle size={19} />
+                          {info?.commentCount ?? "—"}{" "}
                           Comentários
                         </button>
                       </div>
@@ -1210,34 +1536,36 @@ export default function FeedPage() {
                               post.id
                             ]
                           }
+
                           <button
                             type="button"
                             onClick={() =>
                               void refreshInteractions(
                                 post.id
-                              ).then(() =>
-                                setInteractionErrors(
-                                  (previous) => ({
-                                    ...previous,
-                                    [post.id]: "",
-                                  })
+                              )
+                                .then(() =>
+                                  setInteractionErrors(
+                                    (previous) => ({
+                                      ...previous,
+                                      [post.id]: "",
+                                    })
+                                  )
                                 )
-                              ).catch(() => {
-                                setInteractionErrors(
-                                  (previous) => ({
-                                    ...previous,
-                                    [post.id]:
-                                      "Não foi possível atualizar.",
-                                  })
-                                );
-                              })
+                                .catch(() =>
+                                  setInteractionErrors(
+                                    (previous) => ({
+                                      ...previous,
+                                      [post.id]:
+                                        "Não foi possível atualizar.",
+                                    })
+                                  )
+                                )
                             }
                             style={{
                               marginLeft: 8,
                               color:
                                 "var(--sr-primary)",
-                              background:
-                                "transparent",
+                              background: "transparent",
                               border: "none",
                               textDecoration:
                                 "underline",
@@ -1268,25 +1596,16 @@ export default function FeedPage() {
                           </h3>
 
                           {!info ? (
-                            <p
-                              className="sr-muted"
-                              style={{
-                                fontSize: 13,
-                              }}
-                            >
-                              Carregando
-                              comentários...
+                            <p className="sr-muted">
+                              Carregando comentários...
                             </p>
                           ) : info.comments.length ===
                             0 ? (
                             <p
                               className="sr-muted"
-                              style={{
-                                fontSize: 13,
-                              }}
+                              style={{ fontSize: 13 }}
                             >
-                              Seja o primeiro a
-                              comentar!
+                              Seja o primeiro a comentar!
                             </p>
                           ) : (
                             <div
@@ -1299,12 +1618,9 @@ export default function FeedPage() {
                               {info.comments.map(
                                 (comment) => (
                                   <div
-                                    key={
-                                      comment.id
-                                    }
+                                    key={comment.id}
                                     style={{
-                                      display:
-                                        "flex",
+                                      display: "flex",
                                       alignItems:
                                         "flex-start",
                                       gap: 10,
@@ -1363,17 +1679,14 @@ export default function FeedPage() {
                                         style={{
                                           fontSize: 13,
                                           lineHeight: 1.6,
-                                          margin:
-                                            "5px 0",
+                                          margin: "5px 0",
                                           whiteSpace:
                                             "pre-wrap",
                                           overflowWrap:
                                             "anywhere",
                                         }}
                                       >
-                                        {
-                                          comment.content
-                                        }
+                                        {comment.content}
                                       </p>
 
                                       <span
@@ -1420,13 +1733,10 @@ export default function FeedPage() {
                               rows={2}
                               maxLength={2000}
                               value={
-                                commentDrafts[
-                                  post.id
-                                ] || ""
+                                commentDrafts[post.id] ||
+                                ""
                               }
-                              onChange={(
-                                event
-                              ) =>
+                              onChange={(event) =>
                                 setCommentDrafts(
                                   (previous) => ({
                                     ...previous,
@@ -1438,8 +1748,7 @@ export default function FeedPage() {
                               placeholder="Escreva um comentário..."
                               style={{
                                 ...inputStyle,
-                                resize:
-                                  "vertical",
+                                resize: "vertical",
                               }}
                             />
 
@@ -1464,9 +1773,7 @@ export default function FeedPage() {
                                   ).trim()
                                 }
                               >
-                                <Send
-                                  size={15}
-                                />
+                                <Send size={15} />
                                 {busy
                                   ? "Enviando..."
                                   : "Comentar"}
