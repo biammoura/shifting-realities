@@ -1,0 +1,37 @@
+
+name: Validar banco de dados
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-database:
+    name: Verificar esquema Drizzle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Baixar codigo do repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+
+      - name: Verificar tipos TypeScript
+        run: npm run typecheck
+
+      - name: Gerar migracoes para validacao
+        run: npm run db:generate
+
+      - name: Mostrar arquivos de migracao
+        run: find drizzle -maxdepth 3 -type f -print
