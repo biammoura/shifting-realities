@@ -21,8 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: package.json
 
       - name: Instalar dependencias
         run: npm install --no-audit --no-fund
@@ -30,8 +28,16 @@ jobs:
       - name: Verificar tipos TypeScript
         run: npm run typecheck
 
-      - name: Gerar migracoes para validacao
+      - name: Gerar migracoes
         run: npm run db:generate
 
-      - name: Mostrar arquivos de migracao
+      - name: Mostrar arquivos gerados
         run: find drizzle -maxdepth 3 -type f -print
+
+      - name: Salvar migracoes como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: shifting-realities-migrations
+          path: drizzle/
+          if-no-files-found: error
+          retention-days: 30
